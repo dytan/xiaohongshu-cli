@@ -12,6 +12,8 @@ from xhs_cli.cookies import (
     cookies_to_string,
     get_cached_note_context,
     get_cached_xsec_token,
+    get_config_dir,
+    get_cookie_path,
     get_cookies,
     get_index_cache_path,
     get_note_by_index,
@@ -32,6 +34,27 @@ def tmp_config_dir(tmp_path, monkeypatch):
     monkeypatch.setattr("xhs_cli.cookies._TOKEN_CACHE_MEMORY", None)
     monkeypatch.setattr("xhs_cli.cookies._TOKEN_CACHE_PATH", None)
     return tmp_path
+
+
+class TestConfigDir:
+    def test_environment_moves_default_files_and_creates_directory(
+        self, tmp_path, monkeypatch
+    ):
+        config_dir = tmp_path / "persistent" / "xhs"
+        monkeypatch.setenv("XHS_CONFIG_DIR", str(config_dir))
+        monkeypatch.setattr("xhs_cli.cookies._COOKIE_PATH", None)
+
+        assert get_config_dir() == config_dir
+        assert config_dir.is_dir()
+        assert get_cookie_path() == config_dir / "cookies.json"
+        assert get_token_cache_path() == config_dir / "token_cache.json"
+        assert get_index_cache_path() == config_dir / "index_cache.json"
+
+    def test_environment_expands_home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("XHS_CONFIG_DIR", "~/persistent/xhs")
+
+        assert get_config_dir() == tmp_path / "persistent" / "xhs"
 
 
 class TestSaveCookies:

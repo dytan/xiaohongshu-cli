@@ -15,7 +15,7 @@ from ..formatter import (
     render_user_info,
     success_payload,
 )
-from ._common import handle_errors, run_client_action, structured_output_options
+from ._common import exit_for_error, handle_errors, run_client_action, structured_output_options
 
 
 def _emit_payload(data: dict[str, object], *, as_json: bool, as_yaml: bool) -> bool:
@@ -75,13 +75,99 @@ def auth(cookies: str | None):
     help="Browser to read cookies from (default: auto-detect all installed browsers)",
 )
 @structured_output_options
-@click.option("--qrcode", "use_qrcode", is_flag=True, default=False,
-              help="Login via QR code (scan with Xiaohongshu app)")
+@click.option(
+    "--qrcode-status",
+    is_flag=True,
+    help="Check a detached QR login started with --qrcode --async",
+)
+@click.option(
+    "--async",
+    "async_qrcode",
+    is_flag=True,
+    help="Print the QR code and continue login in a detached worker",
+)
+@click.option(
+    "--qrcode",
+    "use_qrcode",
+    is_flag=True,
+    default=False,
+    help="Login via QR code (scan with Xiaohongshu app)",
+)
 @click.pass_context
-def login(ctx, cookie_source: str | None, as_json: bool, as_yaml: bool, use_qrcode: bool):
+def login(
+    ctx,
+    cookie_source: str | None,
+    as_json: bool,
+    as_yaml: bool,
+    qrcode_status: bool,
+    async_qrcode: bool,
+    use_qrcode: bool,
+):
     """Log in by extracting cookies from browser, or via QR code."""
 
+    if qrcode_status:
+        if use_qrcode or async_qrcode:
+            raise click.UsageError("--qrcode-status cannot be combined with --qrcode or --async")
+        from ..qr_login_job import get_qr_login_status
+
+        state = get_qr_login_status()
+        if not _emit_payload(state, as_json=as_json, as_yaml=as_yaml):
+            status_name = str(state.get("status", "not_started"))
+            message = str(state.get("message", "")).strip()
+            console.print(f"QR login status: [bold]{status_name}[/bold]")
+            if message:
+                console.print(message)
+            qr_url = str(state.get("qr_url", "")).strip()
+            if qr_url:
+                console.print(f"QR URL: {qr_url}")
+            if status_name == "succeeded":
+                console.print("Run `xhs status` to verify the saved session.")
+        return
+
+    if async_qrcode and not use_qrcode:
+        raise click.UsageError("--async requires --qrcode")
+
     if use_qrcode:
+        if async_qrcode:
+            from ..qr_login import _display_login_qr
+            from ..qr_login_job import start_qr_login
+
+            try:
+                state = start_qr_login()
+            except RuntimeError as exc:
+                exit_for_error(
+                    XhsApiError(str(exc)),
+                    as_json=as_json,
+                    as_yaml=as_yaml,
+                    prefix="QR login failed",
+                )
+            if state.get("status") == "failed":
+                exit_for_error(
+                    XhsApiError(str(state.get("message", "QR login worker failed"))),
+                    as_json=as_json,
+                    as_yaml=as_yaml,
+                    prefix="QR login failed",
+                )
+            qr_url = str(state.get("qr_url", ""))
+            if not qr_url:
+                exit_for_error(
+                    XhsApiError("QR login worker did not return a QR URL"),
+                    as_json=as_json,
+                    as_yaml=as_yaml,
+                    prefix="QR login failed",
+                )
+            from ..qr_login import render_qr_variants
+
+            qr_payload = {**state, **render_qr_variants(qr_url)}
+            if not _emit_payload(qr_payload, as_json=as_json, as_yaml=as_yaml):
+                _display_login_qr(qr_url, None)
+                console.print(
+                    "\nThe login worker is running in the background. "
+                    "After confirming in the app, run `xhs login --qrcode-status`, "
+                    "then `xhs status`."
+                )
+            return
+
         def _login_with_qrcode() -> None:
             from ..qr_login import qrcode_login
 

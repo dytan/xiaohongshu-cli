@@ -19,7 +19,9 @@ PLATFORM = "macOS"
 
 # Config directory
 CONFIG_DIR_NAME = ".xiaohongshu-cli"
+CONFIG_DIR_ENV = "XHS_CONFIG_DIR"
 COOKIE_FILE = "cookies.json"
 COOKIE_FILE_ENV = "XHS_COOKIE_FILE"
 TOKEN_CACHE_FILE = "token_cache.json"
 INDEX_CACHE_FILE = "index_cache.json"
+QR_LOGIN_STATE_FILE = "qr_login.json"

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TypeVar
+from typing import NoReturn, TypeVar
 
 import click
 
@@ -91,7 +91,7 @@ def exit_for_error(
     as_json: bool,
     as_yaml: bool,
     prefix: str | None = None,
-) -> None:
+) -> NoReturn:
     """Emit a structured/non-structured error and terminate the command."""
     message = str(exc)
     if prefix:

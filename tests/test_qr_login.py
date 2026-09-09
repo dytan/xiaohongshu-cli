@@ -315,7 +315,7 @@ def test_browser_assisted_qrcode_login_uses_headless_camoufox(monkeypatch):
             return False
 
     monkeypatch.setattr("xhs_cli.qr_login._ensure_camoufox_ready", lambda: None)
-    monkeypatch.setattr("xhs_cli.qr_login._display_login_qr", lambda *args: None)
+    monkeypatch.setattr("xhs_cli.qr_login._display_login_qr", lambda *args, **kwargs: None)
     monkeypatch.setattr("xhs_cli.qr_login._wait_for_browser_login_settled", lambda page: None)
     monkeypatch.setattr("xhs_cli.qr_login.save_cookies", lambda cookies: None)
     monkeypatch.setattr("camoufox.sync_api.Camoufox", FakeCamoufox)

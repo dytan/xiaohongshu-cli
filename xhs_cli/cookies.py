@@ -15,7 +15,13 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .constants import CONFIG_DIR_NAME, COOKIE_FILE, INDEX_CACHE_FILE, TOKEN_CACHE_FILE
+from .constants import (
+    CONFIG_DIR_ENV,
+    CONFIG_DIR_NAME,
+    COOKIE_FILE,
+    INDEX_CACHE_FILE,
+    TOKEN_CACHE_FILE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +43,12 @@ def set_cookie_path(path: str | Path | None) -> None:
 
 def get_config_dir() -> Path:
     """Get or create config directory."""
-    config_dir = Path.home() / CONFIG_DIR_NAME
+    configured_dir = os.environ.get(CONFIG_DIR_ENV)
+    config_dir = (
+        Path(configured_dir).expanduser()
+        if configured_dir
+        else Path.home() / CONFIG_DIR_NAME
+    )
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
 

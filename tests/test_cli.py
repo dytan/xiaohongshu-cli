@@ -59,6 +59,111 @@ class TestCliBasic:
     def test_login_help(self):
         result = runner.invoke(cli, ["login", "--help"])
         assert result.exit_code == 0
+        assert "--async" in result.output
+        assert "--qrcode-status" in result.output
+
+    def test_async_qrcode_login_returns_qr_and_follow_up_commands(self, monkeypatch):
+        monkeypatch.setattr(
+            "xhs_cli.qr_login_job.start_qr_login",
+            lambda: {"status": "waiting", "qr_url": "https://example.com/temporary-qr"},
+        )
+
+        result = runner.invoke(cli, ["login", "--qrcode", "--async"])
+
+        assert result.exit_code == 0
+        assert "QR URL: https://example.com/temporary-qr" in result.output
+        assert "Dark-background QR" in result.output
+        assert "Light-background QR" in result.output
+        assert "xhs login --qrcode-status" in result.output
+        assert "xhs status" in result.output
+
+    def test_async_qrcode_json_contains_both_qr_variants(self, monkeypatch):
+        monkeypatch.setattr(
+            "xhs_cli.qr_login_job.start_qr_login",
+            lambda: {"status": "waiting", "qr_url": "https://example.com/temporary-qr"},
+        )
+
+        result = runner.invoke(cli, ["login", "--qrcode", "--async", "--json"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["data"]["qr_url"] == "https://example.com/temporary-qr"
+        assert payload["data"]["dark_background_qr"]
+        assert payload["data"]["light_background_qr"]
+        assert payload["data"]["dark_background_qr"] != payload["data"]["light_background_qr"]
+
+    def test_async_qrcode_uses_global_cookie_path(self, tmp_path, monkeypatch):
+        cookie_file = tmp_path / "persistent" / "cookies.json"
+        seen = {}
+
+        def fake_start():
+            from xhs_cli.cookies import get_cookie_path
+
+            seen["cookie_file"] = get_cookie_path()
+            return {"status": "waiting", "qr_url": "https://example.com/temporary-qr"}
+
+        monkeypatch.setattr("xhs_cli.qr_login_job.start_qr_login", fake_start)
+
+        result = runner.invoke(
+            cli,
+            [
+                "--cookie-file",
+                str(cookie_file),
+                "login",
+                "--qrcode",
+                "--async",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert seen["cookie_file"] == cookie_file
+
+    def test_qrcode_status_reads_detached_job_without_network(self, monkeypatch):
+        monkeypatch.setattr(
+            "xhs_cli.qr_login_job.get_qr_login_status",
+            lambda: {"status": "succeeded", "message": "cookies saved"},
+        )
+
+        result = runner.invoke(cli, ["login", "--qrcode-status"])
+
+        assert result.exit_code == 0
+        assert "QR login status: succeeded" in result.output
+        assert "cookies saved" in result.output
+        assert "xhs status" in result.output
+
+    def test_qrcode_status_shows_saved_qr_url(self, monkeypatch):
+        monkeypatch.setattr(
+            "xhs_cli.qr_login_job.get_qr_login_status",
+            lambda: {
+                "status": "waiting",
+                "message": "waiting for scan",
+                "qr_url": "https://example.com/temporary-qr",
+            },
+        )
+
+        result = runner.invoke(cli, ["login", "--qrcode-status"])
+
+        assert result.exit_code == 0
+        assert "https://example.com/temporary-qr" in result.output
+
+    def test_async_qrcode_start_failure_is_structured(self, monkeypatch):
+        def fail_to_start():
+            raise RuntimeError("worker unavailable")
+
+        monkeypatch.setattr("xhs_cli.qr_login_job.start_qr_login", fail_to_start)
+
+        result = runner.invoke(cli, ["login", "--qrcode", "--async", "--json"])
+
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload["ok"] is False
+        assert "worker unavailable" in payload["error"]["message"]
+
+    def test_async_requires_qrcode(self):
+        result = runner.invoke(cli, ["login", "--async"])
+
+        assert result.exit_code != 0
+        assert "--async requires --qrcode" in result.output
 
     def test_auth_saves_to_custom_cookie_file_without_echoing_secrets(self, tmp_path):
         cookie_file = tmp_path / "persistent" / "cookies.json"
@@ -92,6 +197,33 @@ class TestCliBasic:
 
         assert result.exit_code == 0
         assert cookie_file.exists()
+
+    def test_auth_uses_config_directory_environment_variable(self, tmp_path):
+        config_dir = tmp_path / "persistent" / "xhs"
+        result = runner.invoke(
+            cli,
+            ["auth", "--cookies", "a1=fake"],
+            env={"XHS_CONFIG_DIR": str(config_dir)},
+        )
+
+        assert result.exit_code == 0
+        assert (config_dir / "cookies.json").exists()
+
+    def test_cookie_file_environment_takes_precedence_over_config_dir(self, tmp_path):
+        config_dir = tmp_path / "config"
+        cookie_file = tmp_path / "cookie-only" / "cookies.json"
+        result = runner.invoke(
+            cli,
+            ["auth", "--cookies", "a1=fake"],
+            env={
+                "XHS_CONFIG_DIR": str(config_dir),
+                "XHS_COOKIE_FILE": str(cookie_file),
+            },
+        )
+
+        assert result.exit_code == 0
+        assert cookie_file.exists()
+        assert not (config_dir / "cookies.json").exists()
 
     def test_auth_prompts_for_hidden_cookie_header(self, tmp_path):
         cookie_file = tmp_path / "cookies.json"

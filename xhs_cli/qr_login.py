@@ -226,16 +226,11 @@ def _complete_confirmed_session(
             )
         logger.debug(
             "QR post-confirm completion attempt=%d confirmed_user_id=%s "
-            "completion_user_id=%s self_info_user_id=%s cookies=%s data=%s",
+            "completion_user_id=%s self_info_user_id=%s",
             attempt + 1,
             confirmed_user_id,
             completed_user_id,
             self_info_user_id,
-            {
-                "web_session": client.cookies.get("web_session"),
-                "web_session_sec": client.cookies.get("web_session_sec"),
-            },
-            completion_data,
         )
         if completed_user_id and completed_user_id == confirmed_user_id:
             return completion_data
@@ -248,8 +243,7 @@ def _complete_confirmed_session(
         "QR login confirmed, but completion never returned the confirmed user session. "
         f"expected={confirmed_user_id} "
         f"completion_user={_resolved_user_id(last_data) or 'unknown'} "
-        f"self_info_user={last_self_info_user_id or 'unknown'} "
-        f"completion_data={last_data}"
+        f"self_info_user={last_self_info_user_id or 'unknown'}"
     )
 
 
@@ -294,27 +288,46 @@ def _render_qr_half_blocks(matrix: list[list[bool]], *, invert: bool = False) ->
     return "\n".join(lines)
 
 
-def _display_qr_in_terminal(data: str) -> bool:
-    """Display *data* as a QR code in the terminal.  Returns True on success."""
-    try:
-        import qrcode  # type: ignore[import-untyped]
-    except ImportError:
-        return False
+def render_qr_variants(data: str) -> dict[str, str]:
+    """Render *data* as QR text for dark and light backgrounds."""
+    import qrcode  # type: ignore[import-untyped]
 
     qr = qrcode.QRCode(border=4)
     qr.add_data(data)
     qr.make(fit=True)
-
     modules = qr.get_matrix()
+    return {
+        "dark_background_qr": _render_qr_half_blocks(modules, invert=True),
+        "light_background_qr": _render_qr_half_blocks(modules),
+    }
+
+
+def _display_qr_in_terminal(data: str) -> bool:
+    """Display *data* as a QR code in the terminal.  Returns True on success."""
+    try:
+        variants = render_qr_variants(data)
+    except ImportError:
+        return False
+
     print("Dark-background QR:")
-    print(_render_qr_half_blocks(modules, invert=True))
+    print(variants["dark_background_qr"])
     print("\nLight-background QR:")
-    print(_render_qr_half_blocks(modules))
+    print(variants["light_background_qr"])
     return True
 
 
-def _display_login_qr(qr_url: str, on_status: callable[[str], None] | None) -> None:
-    """Display a temporary QR URL followed by its chat-safe terminal rendering."""
+def _display_login_qr(
+    qr_url: str,
+    on_status: callable[[str], None] | None,
+    *,
+    on_qr: callable[[str], None] | None = None,
+    render_qr: bool = True,
+) -> None:
+    """Publish a temporary QR URL and optionally render it in the terminal."""
+    if on_qr:
+        on_qr(qr_url)
+    if not render_qr:
+        return
     _emit_status(on_status, f"QR URL: {qr_url}")
     _emit_status(on_status, "\n📱 Scan the QR code below with the Xiaohongshu app:\n")
     try:
@@ -354,6 +367,8 @@ def _ensure_camoufox_ready() -> None:
 def _browser_assisted_qrcode_login(
     *,
     on_status: callable[[str], None] | None = None,
+    on_qr: callable[[str], None] | None = None,
+    render_qr: bool = True,
     timeout_s: int = POLL_TIMEOUT_S,
 ) -> dict[str, str]:
     """Log in by letting a real browser complete the QR flow, then export cookies."""
@@ -408,9 +423,9 @@ def _browser_assisted_qrcode_login(
         qr_payload = _browser_response_payload(qr_response_info.value)
         qr_url = str(qr_payload.get("url", "")).strip()
         if not qr_url:
-            raise XhsApiError(f"Browser-assisted QR login did not expose a QR URL: {qr_payload}")
+            raise XhsApiError("Browser-assisted QR login did not expose a QR URL.")
 
-        _display_login_qr(qr_url, on_status)
+        _display_login_qr(qr_url, on_status, on_qr=on_qr, render_qr=render_qr)
 
         try:
             with page.expect_response(
@@ -442,7 +457,7 @@ def _browser_assisted_qrcode_login(
         if missing:
             raise XhsApiError(
                 "Browser-assisted QR login succeeded, but exported cookies were incomplete: "
-                f"missing={', '.join(missing)} completion_data={completion_data}"
+                f"missing={', '.join(missing)}"
             )
 
         save_cookies(cookies)
@@ -457,6 +472,8 @@ def _browser_assisted_qrcode_login(
 def _http_qrcode_login(
     *,
     on_status: callable[[str], None] | None = None,
+    on_qr: callable[[str], None] | None = None,
+    render_qr: bool = True,
     timeout_s: int = POLL_TIMEOUT_S,
 ) -> dict[str, str]:
     """Run the legacy pure-HTTP QR login flow."""
@@ -470,11 +487,7 @@ def _http_qrcode_login(
         try:
             activate_data = client.login_activate()
             _apply_session_cookies(client, activate_data)
-            guest_session = activate_data.get("session", "")
-            logger.debug(
-                "Initial activate: session=%s user_id=%s",
-                guest_session, activate_data.get("user_id"),
-            )
+            logger.debug("Initial activate: user_id=%s", activate_data.get("user_id"))
         except Exception as exc:
             logger.debug("Initial activate failed (non-fatal): %s", exc)
 
@@ -483,9 +496,9 @@ def _http_qrcode_login(
         code = qr_data["code"]
         qr_url = qr_data["url"]
 
-        logger.debug("QR created: qr_id=%s, code=%s", qr_id, code)
+        logger.debug("QR created: qr_id=%s", qr_id)
 
-        _display_login_qr(qr_url, on_status)
+        _display_login_qr(qr_url, on_status, on_qr=on_qr, render_qr=render_qr)
 
         start = time.time()
         last_status = -1
@@ -506,7 +519,7 @@ def _http_qrcode_login(
                 consecutive_errors = 0
 
             code_status = status_data.get("codeStatus", -1)
-            logger.debug("QR poll: codeStatus=%s data=%s", code_status, status_data)
+            logger.debug("QR poll: codeStatus=%s", code_status)
 
             if code_status != last_status:
                 last_status = code_status
@@ -542,14 +555,22 @@ def _http_qrcode_login(
 def qrcode_login(
     *,
     on_status: callable[[str], None] | None = None,
+    on_qr: callable[[str], None] | None = None,
+    render_qr: bool = True,
     timeout_s: int = POLL_TIMEOUT_S,
     prefer_browser_assisted: bool = False,
 ) -> dict[str, str]:
     """Run the QR code login flow."""
+    options = {
+        "on_status": on_status,
+        "on_qr": on_qr,
+        "render_qr": render_qr,
+        "timeout_s": timeout_s,
+    }
     if prefer_browser_assisted:
         try:
-            return _browser_assisted_qrcode_login(on_status=on_status, timeout_s=timeout_s)
+            return _browser_assisted_qrcode_login(**options)
         except BrowserQrLoginUnavailable as exc:
             logger.info("Browser-assisted QR login unavailable, falling back to HTTP flow: %s", exc)
 
-    return _http_qrcode_login(on_status=on_status, timeout_s=timeout_s)
+    return _http_qrcode_login(**options)
