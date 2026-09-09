@@ -64,7 +64,9 @@ uv sync
 ```bash
 # ─── Auth ─────────────────────────────────────────
 xhs login                             # Extract cookies from browser
-xhs login --qrcode                    # Browser-assisted QR login, scan in terminal
+xhs login --qrcode                    # Headless QR login; prints Unicode QR + temporary URL
+xhs auth                              # Open XHS externally, then paste Cookie header securely
+xhs auth --cookies 'a1=...; web_session=...'  # Import a browser Cookie header
 xhs status                            # Check login status
 xhs whoami                            # Detailed profile (fans, likes, etc)
 xhs whoami --json                     # Structured JSON envelope
@@ -148,13 +150,25 @@ xhs notifications --type connections   # 新增关注 notifications
 
 xiaohongshu-cli supports multiple authentication methods:
 
-1. **Saved cookies** — loads from `~/.xiaohongshu-cli/cookies.json`
-2. **Browser cookies** — auto-detects installed browsers and extracts cookies (supports Chrome, Arc, Edge, Firefox, Safari, Brave, Chromium, Opera, Vivaldi, and more)
-3. **QR code login** — browser-assisted login with terminal QR output (`xhs login --qrcode`)
+1. **Saved cookies** — loads from `~/.xiaohongshu-cli/cookies.json`, or a custom path set by the global `--cookie-file PATH` option or `XHS_COOKIE_FILE`
+2. **Imported cookies** — `xhs auth --cookies 'a1=...; web_session=...'` parses a browser Cookie header and saves it as JSON
+3. **Browser cookies** — auto-detects installed browsers and extracts cookies (supports Chrome, Arc, Edge, Firefox, Safari, Brave, Chromium, Opera, Vivaldi, and more)
+4. **QR code login** — headless Camoufox login with chat-safe black/white Unicode QR output and the temporary QR URL (`xhs login --qrcode`)
 
 `xhs login` automatically tries all installed browsers and uses the first one with valid cookies.
-Use `--cookie-source <browser>` to specify a browser explicitly, or `--qrcode` for browser-assisted QR login.
+Use `--cookie-source <browser>` to specify a browser explicitly, or `--qrcode` for headless browser-assisted QR login.
 Other authenticated commands automatically retry once with fresh browser cookies when the saved session has expired.
+
+In a sandbox without a GUI, run `xhs auth` for the manual external-browser flow. The CLI prints the XHS login URL, waits for a hidden prompt, and saves the pasted browser `Cookie` request header. In browser developer tools, copy the `Cookie` header from an authenticated request to `xiaohongshu.com`; do not paste a `Set-Cookie` response header. Alternatively, use `xhs login --qrcode` and scan the emitted QR with the Xiaohongshu app. It prints separate variants for dark and light chat backgrounds; scan the matching variant without reflowing its monospace text. The printed QR URL is temporary and is not a replacement for the app scan.
+
+To persist cookies at a mounted path, pass the global option before the command:
+
+```bash
+xhs --cookie-file /data/xhs/cookies.json auth --cookies 'a1=...; web_session=...'
+xhs --cookie-file /data/xhs/cookies.json status
+```
+
+For automation, `XHS_COOKIE_FILE=/data/xhs/cookies.json` applies the path to every command. `XHS_COOKIES` can supply the import value without putting it directly in the command arguments. Treat both values and the saved JSON file as secrets.
 
 ### Cookie TTL
 
@@ -174,6 +188,8 @@ After any listing command such as `search`, `feed`, `hot`, `user-posts`, `favori
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OUTPUT` | `auto` | Output format: `json`, `yaml`, `rich`, or `auto` (→ YAML when non-TTY) |
+| `XHS_COOKIE_FILE` | `~/.xiaohongshu-cli/cookies.json` | Custom cookie JSON path used by load, save, and logout |
+| `XHS_COOKIES` | unset | Browser Cookie header imported by `xhs auth` |
 ## Rate Limiting & Anti-Detection
 
 xiaohongshu-cli includes comprehensive anti-risk-control measures designed to minimize detection:
@@ -360,7 +376,9 @@ uv sync
 ```bash
 # 认证
 xhs login                             # 从浏览器提取 Cookie
-xhs login --qrcode                    # browser-assisted 二维码扫码登录（终端显示二维码）
+xhs login --qrcode                    # 无头二维码登录（输出 Unicode 二维码和临时 URL）
+xhs auth                              # 外部浏览器登录后，安全粘贴 Cookie 请求头
+xhs auth --cookies 'a1=...; web_session=...'  # 导入浏览器 Cookie 字符串
 xhs status                            # 检查登录状态
 xhs whoami                            # 查看用户资料
 xhs logout                            # 清除缓存的 Cookie
@@ -430,11 +448,14 @@ xhs notifications --type connections   # 新增关注通知
 
 xiaohongshu-cli 支持多种认证方式：
 
-1. **已保存 Cookie** — 从 `~/.xiaohongshu-cli/cookies.json` 加载
-2. **浏览器 Cookie** — 自动检测已安装浏览器并提取（支持 Chrome、Arc、Edge、Firefox、Safari、Brave、Chromium、Opera、Vivaldi 等）
-3. **二维码扫码登录** — browser-assisted 登录，终端显示二维码，用小红书 App 扫码（`xhs login --qrcode`）
+1. **已保存 Cookie** — 从 `~/.xiaohongshu-cli/cookies.json` 加载，也可通过全局 `--cookie-file PATH` 或 `XHS_COOKIE_FILE` 指定路径
+2. **导入 Cookie** — `xhs auth --cookies 'a1=...; web_session=...'` 解析浏览器 Cookie 字符串并保存为 JSON
+3. **浏览器 Cookie** — 自动检测已安装浏览器并提取（支持 Chrome、Arc、Edge、Firefox、Safari、Brave、Chromium、Opera、Vivaldi 等）
+4. **二维码扫码登录** — 无头 Camoufox 登录，输出适合聊天消息的黑白 Unicode 二维码和临时 URL，用小红书 App 扫码（`xhs login --qrcode`）
 
-Cookie 保存后有效期 **7 天**，超时后自动尝试从浏览器刷新。
+无 GUI 的沙箱可以直接执行 `xhs auth`：CLI 会输出小红书登录页地址并以隐藏输入方式等待 Cookie。请在外部浏览器登录后，从开发者工具中复制发往 `xiaohongshu.com` 的已认证请求的 `Cookie` 请求头；不要复制响应中的 `Set-Cookie`。也可以执行 `xhs login --qrcode`，用小红书 App 扫描输出的二维码。CLI 会分别输出适用于深色和浅色聊天背景的版本，请扫描与当前背景匹配且未被自动换行的等宽文本版本。临时 QR URL 仅用于辅助展示，不能替代 App 扫码。
+
+Cookie 保存后有效期 **7 天**，超时后自动尝试从浏览器刷新。持久化到挂载目录时，应把全局参数放在子命令前，例如 `xhs --cookie-file /data/xhs/cookies.json status`。自动化环境也可设置 `XHS_COOKIE_FILE`，并通过 `XHS_COOKIES` 传入待导入的 Cookie，避免把密钥直接写入命令参数。Cookie 和保存的 JSON 文件都应按密钥保护。
 
 `xhs login` 会自动尝试所有已安装浏览器，使用第一个有有效 Cookie 的浏览器。也可用 `--cookie-source <browser>` 指定浏览器，或 `--qrcode` 使用 browser-assisted 二维码登录。其他需认证命令在 session 过期时会自动重试一次。
 

@@ -18,6 +18,7 @@ from xhs_cli.cookies import (
     get_token_cache_path,
     load_saved_cookies,
     load_token_cache,
+    parse_cookie_string,
     save_cookies,
     save_note_index,
 )
@@ -50,6 +51,50 @@ class TestSaveCookies:
         cookie_file = tmp_config_dir / "cookies.json"
         stat = cookie_file.stat()
         assert stat.st_mode & 0o777 == 0o600
+
+    def test_custom_path_creates_parent(self, tmp_path, monkeypatch):
+        cookie_file = tmp_path / "persistent" / "xhs" / "cookies.json"
+        monkeypatch.setattr("xhs_cli.cookies._COOKIE_PATH", cookie_file)
+
+        save_cookies({"a1": "test"})
+
+        assert cookie_file.exists()
+        assert load_saved_cookies()["a1"] == "test"
+
+    def test_replaces_symlink_without_overwriting_its_target(self, tmp_path, monkeypatch):
+        target = tmp_path / "target.json"
+        target.write_text("do not overwrite")
+        cookie_file = tmp_path / "cookies.json"
+        cookie_file.symlink_to(target)
+        monkeypatch.setattr("xhs_cli.cookies._COOKIE_PATH", cookie_file)
+
+        save_cookies({"a1": "test"})
+
+        assert not cookie_file.is_symlink()
+        assert target.read_text() == "do not overwrite"
+        assert load_saved_cookies()["a1"] == "test"
+
+
+class TestParseCookieString:
+    def test_preserves_equals_in_values(self):
+        assert parse_cookie_string(" a1=fake== ; web_session=session+value= ") == {
+            "a1": "fake==",
+            "web_session": "session+value=",
+        }
+
+    def test_allows_empty_optional_cookie_values(self):
+        assert parse_cookie_string("a1=fake; optional=") == {
+            "a1": "fake",
+            "optional": "",
+        }
+
+    @pytest.mark.parametrize(
+        "raw",
+        ["", "web_session=fake", "a1=fake; malformed", "a1=", "a1=fake; =value"],
+    )
+    def test_rejects_invalid_cookie_strings(self, raw):
+        with pytest.raises(ValueError, match="Invalid cookie string"):
+            parse_cookie_string(raw)
 
 
 class TestLoadSavedCookies:

@@ -27,11 +27,14 @@ from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
 
 import click
 
 from . import __version__
 from .commands import auth, creator, interactions, notifications, reading, social
+from .constants import COOKIE_FILE_ENV
+from .cookies import set_cookie_path
 
 
 def _fix_windows_encoding() -> None:
@@ -56,11 +59,18 @@ _fix_windows_encoding()
     show_default=True,
     help="Browser to read cookies from (auto = try all installed browsers)",
 )
+@click.option(
+    "--cookie-file",
+    type=click.Path(path_type=Path, dir_okay=False),
+    envvar=COOKIE_FILE_ENV,
+    help=f"Cookie JSON path (env: {COOKIE_FILE_ENV})",
+)
 @click.pass_context
-def cli(ctx, verbose: bool, cookie_source: str):
+def cli(ctx, verbose: bool, cookie_source: str, cookie_file: Path | None):
     """xhs — Xiaohongshu CLI via reverse-engineered API 📕"""
     ctx.ensure_object(dict)
     ctx.obj["cookie_source"] = cookie_source
+    set_cookie_path(cookie_file)
 
     if verbose:
         logging.basicConfig(level=logging.DEBUG, format="%(name)s %(message)s")
@@ -70,6 +80,7 @@ def cli(ctx, verbose: bool, cookie_source: str):
 
 # ─── Auth commands ───────────────────────────────────────────────────────────
 
+cli.add_command(auth.auth)
 cli.add_command(auth.login)
 cli.add_command(auth.status)
 cli.add_command(auth.logout)

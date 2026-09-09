@@ -6,7 +6,7 @@ import click
 
 from ..client import XhsClient
 from ..command_normalizers import normalize_xhs_user_payload
-from ..cookies import clear_cookies, get_cookies
+from ..cookies import clear_cookies, get_cookie_path, get_cookies, parse_cookie_string, save_cookies
 from ..exceptions import XhsApiError
 from ..formatter import (
     console,
@@ -46,6 +46,26 @@ def _print_status_summary(user: dict[str, object]) -> None:
         console.print(f"  IP 属地: {user['ip_location']}")
     if user["desc"]:
         console.print(f"  简介: {user['desc']}")
+
+
+@click.command()
+@click.option(
+    "--cookies",
+    envvar="XHS_COOKIES",
+    help="Browser Cookie header string (env: XHS_COOKIES; command-line values may enter shell history)",
+)
+def auth(cookies: str | None):
+    """Import a browser Cookie header string and save it for later commands."""
+    if cookies is None:
+        console.print("Open https://www.xiaohongshu.com/login in your browser and log in.")
+        cookies = click.prompt("Paste the Cookie request header", hide_input=True)
+    try:
+        parsed = parse_cookie_string(cookies)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from None
+    save_cookies(parsed)
+    print_success(f"Saved {len(parsed)} cookies to {get_cookie_path()}")
+
 
 @click.command()
 @click.option(

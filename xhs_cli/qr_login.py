@@ -12,10 +12,10 @@ Supports two backends:
 from __future__ import annotations
 
 import logging
+import os
 import random
-import subprocess
-import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from .client import XhsClient
@@ -266,8 +266,8 @@ def _generate_webid() -> str:
     return "".join(random.choices("0123456789abcdef", k=32))
 
 
-def _render_qr_half_blocks(matrix: list[list[bool]]) -> str:
-    """Render QR matrix using half-block characters (▀▄█ and space)."""
+def _render_qr_half_blocks(matrix: list[list[bool]], *, invert: bool = False) -> str:
+    """Render a QR matrix using half-block characters for the viewer's background."""
     if not matrix:
         return ""
 
@@ -277,8 +277,8 @@ def _render_qr_half_blocks(matrix: list[list[bool]]) -> str:
     for row_idx in range(0, size, 2):
         line = ""
         for col_idx in range(size):
-            top = matrix[row_idx][col_idx]
-            bot = matrix[row_idx + 1][col_idx] if row_idx + 1 < size else False
+            top = matrix[row_idx][col_idx] != invert
+            bot = (matrix[row_idx + 1][col_idx] if row_idx + 1 < size else False) != invert
 
             if top and bot:
                 line += "█"
@@ -306,32 +306,46 @@ def _display_qr_in_terminal(data: str) -> bool:
     qr.make(fit=True)
 
     modules = qr.get_matrix()
+    print("Dark-background QR:")
+    print(_render_qr_half_blocks(modules, invert=True))
+    print("\nLight-background QR:")
     print(_render_qr_half_blocks(modules))
     return True
 
 
-def _ensure_camoufox_ready() -> None:
-    """Validate that the Camoufox package and browser binary are available."""
+def _display_login_qr(qr_url: str, on_status: callable[[str], None] | None) -> None:
+    """Display a temporary QR URL followed by its chat-safe terminal rendering."""
+    _emit_status(on_status, f"QR URL: {qr_url}")
+    _emit_status(on_status, "\n📱 Scan the QR code below with the Xiaohongshu app:\n")
     try:
-        import camoufox  # noqa: F401
+        rendered = _display_qr_in_terminal(qr_url)
+    except Exception as exc:
+        logger.debug("Failed to render terminal QR code: %s", exc)
+        rendered = False
+    if not rendered:
+        _emit_status(on_status, "⚠️  Unable to render QR; open the URL above in a QR-capable client.")
+    _emit_status(on_status, "\n⏳ Waiting for QR code scan...")
+
+
+def _ensure_camoufox_ready() -> None:
+    """Validate that the Camoufox package and browser executable are available."""
+    try:
+        from camoufox.exceptions import CamoufoxNotInstalled, UnsupportedVersion
+        from camoufox.pkgman import camoufox_path, launch_path
     except ImportError as exc:
         raise BrowserQrLoginUnavailable(
-            "Browser-assisted QR login requires the `camoufox` package."
+            "Browser-assisted QR login requires the `camoufox` package and browser runtime."
         ) from exc
 
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "camoufox", "path"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
+        camoufox_path(download_if_missing=False)
+        executable = Path(launch_path())
+    except (CamoufoxNotInstalled, UnsupportedVersion, OSError) as exc:
         raise BrowserQrLoginUnavailable(
-            "Unable to validate the Camoufox browser installation."
+            "Camoufox browser runtime is missing. Run `python -m camoufox fetch` first."
         ) from exc
 
-    if result.returncode != 0 or not result.stdout.strip():
+    if not executable.is_file() or not os.access(executable, os.X_OK):
         raise BrowserQrLoginUnavailable(
             "Camoufox browser runtime is missing. Run `python -m camoufox fetch` first."
         )
@@ -346,6 +360,7 @@ def _browser_assisted_qrcode_login(
     _ensure_camoufox_ready()
 
     try:
+        from camoufox.addons import DefaultAddons
         from camoufox.sync_api import Camoufox
     except ImportError as exc:
         raise BrowserQrLoginUnavailable(
@@ -356,7 +371,7 @@ def _browser_assisted_qrcode_login(
 
     _emit_status(on_status, "🔑 Starting browser-assisted QR login...")
 
-    with Camoufox(headless=False) as browser:
+    with Camoufox(headless=True, exclude_addons=[DefaultAddons.UBO]) as browser:
         page = browser.new_page()
 
         def _handle_response(response) -> None:
@@ -395,11 +410,7 @@ def _browser_assisted_qrcode_login(
         if not qr_url:
             raise XhsApiError(f"Browser-assisted QR login did not expose a QR URL: {qr_payload}")
 
-        _emit_status(on_status, "\n📱 Scan the QR code below with the Xiaohongshu app:\n")
-        if not _display_qr_in_terminal(qr_url):
-            _emit_status(on_status, "⚠️  Install 'qrcode' for terminal rendering: pip install qrcode")
-            _emit_status(on_status, f"QR URL: {qr_url}")
-        _emit_status(on_status, "\n⏳ Waiting for QR code scan...")
+        _display_login_qr(qr_url, on_status)
 
         try:
             with page.expect_response(
@@ -474,11 +485,7 @@ def _http_qrcode_login(
 
         logger.debug("QR created: qr_id=%s, code=%s", qr_id, code)
 
-        _emit_status(on_status, "\n📱 Scan the QR code below with the Xiaohongshu app:\n")
-        if not _display_qr_in_terminal(qr_url):
-            _emit_status(on_status, "⚠️  Install 'qrcode' for terminal rendering: pip install qrcode")
-            _emit_status(on_status, f"QR URL: {qr_url}")
-        _emit_status(on_status, "\n⏳ Waiting for QR code scan...")
+        _display_login_qr(qr_url, on_status)
 
         start = time.time()
         last_status = -1

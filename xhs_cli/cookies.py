@@ -5,8 +5,10 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections import OrderedDict
@@ -24,7 +26,13 @@ _TOKEN_CACHE_LOCK = threading.RLock()
 _TOKEN_CACHE_MEMORY: OrderedDict[str, dict[str, Any]] | None = None
 _TOKEN_CACHE_PATH: Path | None = None
 NOTE_CONTEXT_TTL_SECONDS = 86400
+_COOKIE_PATH: Path | None = None
 
+
+def set_cookie_path(path: str | Path | None) -> None:
+    """Override the cookie file path for this process."""
+    global _COOKIE_PATH
+    _COOKIE_PATH = Path(path).expanduser() if path else None
 
 
 def get_config_dir() -> Path:
@@ -35,8 +43,8 @@ def get_config_dir() -> Path:
 
 
 def get_cookie_path() -> Path:
-    """Get cookie file path."""
-    return get_config_dir() / COOKIE_FILE
+    """Get the configured cookie file path or the default config path."""
+    return _COOKIE_PATH or get_config_dir() / COOKIE_FILE
 
 
 def get_token_cache_path() -> Path:
@@ -65,11 +73,23 @@ def load_saved_cookies() -> dict[str, str] | None:
 
 
 def save_cookies(cookies: dict[str, str]) -> None:
-    """Save cookies to local storage with restricted permissions and TTL timestamp."""
+    """Atomically save cookies with private permissions and a TTL timestamp."""
     cookie_path = get_cookie_path()
+    cookie_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {**cookies, "saved_at": time.time()}
-    cookie_path.write_text(json.dumps(payload, indent=2))
-    cookie_path.chmod(0o600)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{cookie_path.name}.", dir=cookie_path.parent)
+    try:
+        with os.fdopen(fd, "w") as temp_file:
+            json.dump(payload, temp_file, indent=2)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_name, cookie_path)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
     logger.debug("Saved cookies to %s", cookie_path)
 
 
@@ -519,6 +539,24 @@ def get_cookies(
         return result
 
     raise NoCookieError(cookie_source)
+
+
+def parse_cookie_string(raw: str) -> dict[str, str]:
+    """Parse a browser Cookie header value into a cookie mapping."""
+    cookies: dict[str, str] = {}
+    for segment in raw.split(";"):
+        segment = segment.strip()
+        if not segment:
+            continue
+        if "=" not in segment:
+            raise ValueError("Invalid cookie string: expected name=value pairs separated by semicolons")
+        name, value = (part.strip() for part in segment.split("=", 1))
+        if not name:
+            raise ValueError("Invalid cookie string: cookie names must not be empty")
+        cookies[name] = value
+    if not cookies.get("a1"):
+        raise ValueError("Invalid cookie string: required a1 cookie is missing")
+    return cookies
 
 
 def cookies_to_string(cookies: dict[str, str]) -> str:

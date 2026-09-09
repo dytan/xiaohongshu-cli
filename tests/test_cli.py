@@ -1,5 +1,7 @@
 """Tests for CLI commands using Click's test runner."""
 
+import json
+
 import pytest
 import yaml
 from click.testing import CliRunner
@@ -58,6 +60,56 @@ class TestCliBasic:
         result = runner.invoke(cli, ["login", "--help"])
         assert result.exit_code == 0
 
+    def test_auth_saves_to_custom_cookie_file_without_echoing_secrets(self, tmp_path):
+        cookie_file = tmp_path / "persistent" / "cookies.json"
+        result = runner.invoke(
+            cli,
+            [
+                "--cookie-file",
+                str(cookie_file),
+                "auth",
+                "--cookies",
+                "a1=fake-secret; web_session=fake-session==",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "fake-secret" not in result.output
+        assert "fake-session" not in result.output
+        assert cookie_file.stat().st_mode & 0o777 == 0o600
+        saved = json.loads(cookie_file.read_text())
+        assert saved["a1"] == "fake-secret"
+        assert saved["web_session"] == "fake-session=="
+        assert "saved_at" in saved
+
+    def test_auth_uses_cookie_file_environment_variable(self, tmp_path):
+        cookie_file = tmp_path / "cookies.json"
+        result = runner.invoke(
+            cli,
+            ["auth", "--cookies", "a1=fake"],
+            env={"XHS_COOKIE_FILE": str(cookie_file)},
+        )
+
+        assert result.exit_code == 0
+        assert cookie_file.exists()
+
+    def test_auth_prompts_for_hidden_cookie_header(self, tmp_path):
+        cookie_file = tmp_path / "cookies.json"
+        cookie_header = "a1=hidden-secret; web_session=hidden-session=="
+        result = runner.invoke(
+            cli,
+            ["--cookie-file", str(cookie_file), "auth"],
+            input=f"{cookie_header}\n",
+        )
+
+        assert result.exit_code == 0
+        assert "https://www.xiaohongshu.com/login" in result.output
+        assert "hidden-secret" not in result.output
+        assert "hidden-session" not in result.output
+        saved = json.loads(cookie_file.read_text())
+        assert saved["a1"] == "hidden-secret"
+        assert saved["web_session"] == "hidden-session=="
+
     def test_status_help(self):
         result = runner.invoke(cli, ["status", "--help"])
         assert result.exit_code == 0
@@ -66,7 +118,7 @@ class TestCliBasic:
         result = runner.invoke(cli, ["--help"])
         commands_expected = [
             # Auth
-            "login", "status", "logout", "whoami",
+            "auth", "login", "status", "logout", "whoami",
             # Reading
             "search", "read", "comments", "sub-comments", "user", "user-posts",
             "feed", "hot", "topics", "search-user", "my-notes",

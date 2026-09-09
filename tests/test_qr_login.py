@@ -4,7 +4,15 @@ import pytest
 
 from xhs_cli.command_normalizers import normalize_xhs_user_payload
 from xhs_cli.exceptions import XhsApiError
-from xhs_cli.qr_login import BrowserQrLoginUnavailable, _normalize_browser_cookies, qrcode_login
+from xhs_cli.qr_login import (
+    BrowserQrLoginUnavailable,
+    _browser_assisted_qrcode_login,
+    _display_login_qr,
+    _ensure_camoufox_ready,
+    _normalize_browser_cookies,
+    _render_qr_half_blocks,
+    qrcode_login,
+)
 
 
 class _FakeQrClient:
@@ -173,6 +181,150 @@ def test_qrcode_login_rejects_mismatched_confirmed_user(monkeypatch):
 
     with pytest.raises(XhsApiError, match="completion never returned"):
         qrcode_login(timeout_s=1)
+
+
+def test_render_qr_half_blocks_can_match_dark_or_light_backgrounds():
+    matrix = [[True, False], [False, True]]
+
+    assert _render_qr_half_blocks(matrix) == "▀▄"
+    assert _render_qr_half_blocks(matrix, invert=True) == "▄▀"
+
+
+def test_display_qr_prints_variants_for_dark_and_light_backgrounds(capsys):
+    from xhs_cli.qr_login import _display_qr_in_terminal
+
+    assert _display_qr_in_terminal("https://example.com/temporary-qr") is True
+
+    output = capsys.readouterr().out
+    assert "Dark-background QR" in output
+    assert "Light-background QR" in output
+
+
+def test_display_login_qr_always_emits_temporary_url(monkeypatch):
+    messages = []
+    monkeypatch.setattr("xhs_cli.qr_login._display_qr_in_terminal", lambda data: True)
+
+    _display_login_qr("https://example.com/temporary-qr", messages.append)
+
+    assert "QR URL: https://example.com/temporary-qr" in messages
+
+
+def test_display_login_qr_keeps_url_when_rendering_fails(monkeypatch):
+    messages = []
+    monkeypatch.setattr(
+        "xhs_cli.qr_login._display_qr_in_terminal",
+        lambda data: (_ for _ in ()).throw(RuntimeError("render failed")),
+    )
+
+    _display_login_qr("https://example.com/temporary-qr", messages.append)
+
+    assert messages[0] == "QR URL: https://example.com/temporary-qr"
+    assert any("Unable to render QR" in message for message in messages)
+
+
+def test_ensure_camoufox_ready_never_downloads(monkeypatch, tmp_path):
+    browser_dir = tmp_path / "camoufox"
+    browser_dir.mkdir()
+    executable = browser_dir / "camoufox-bin"
+    executable.write_text("")
+    executable.chmod(0o700)
+    calls = []
+
+    monkeypatch.setattr(
+        "camoufox.pkgman.camoufox_path",
+        lambda download_if_missing: calls.append(download_if_missing) or browser_dir,
+    )
+    monkeypatch.setattr("camoufox.pkgman.launch_path", lambda: str(executable))
+
+    _ensure_camoufox_ready()
+
+    assert calls == [False]
+
+
+def test_browser_assisted_qrcode_login_uses_headless_camoufox(monkeypatch):
+    launch_options = []
+
+    class FakeResponse:
+        request = type("Request", (), {"method": "GET"})()
+
+        def __init__(self, data):
+            self.url = "https://www.xiaohongshu.com/api/sns/web/v1/login/qrcode/status"
+            self.data = data
+
+        def json(self):
+            return {"success": True, "data": self.data}
+
+    class FakeResponseInfo:
+        def __init__(self, data):
+            self.value = FakeResponse(data)
+
+    class FakeExpectation:
+        def __init__(self, data):
+            self.data = data
+
+        def __enter__(self):
+            return FakeResponseInfo(self.data)
+
+        def __exit__(self, *args):
+            return False
+
+    class FakeContext:
+        def cookies(self):
+            return [
+                {"name": "a1", "value": "a1-1", "domain": ".xiaohongshu.com"},
+                {"name": "webId", "value": "webid-1", "domain": ".xiaohongshu.com"},
+            ]
+
+    class FakePage:
+        context = FakeContext()
+
+        def __init__(self):
+            self.expectations = 0
+
+        def on(self, *args):
+            pass
+
+        def expect_response(self, predicate, timeout):
+            self.expectations += 1
+            if self.expectations == 1:
+                return FakeExpectation({"url": "https://example.com/temporary-qr"})
+            return FakeExpectation({
+                "code_status": 2,
+                "login_info": {
+                    "user_id": "user-1",
+                    "session": "session-1",
+                    "secure_session": "secure-1",
+                },
+            })
+
+        def goto(self, *args, **kwargs):
+            pass
+
+    class FakeBrowser:
+        def new_page(self):
+            return FakePage()
+
+    class FakeCamoufox:
+        def __init__(self, **kwargs):
+            launch_options.append(kwargs)
+
+        def __enter__(self):
+            return FakeBrowser()
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr("xhs_cli.qr_login._ensure_camoufox_ready", lambda: None)
+    monkeypatch.setattr("xhs_cli.qr_login._display_login_qr", lambda *args: None)
+    monkeypatch.setattr("xhs_cli.qr_login._wait_for_browser_login_settled", lambda page: None)
+    monkeypatch.setattr("xhs_cli.qr_login.save_cookies", lambda cookies: None)
+    monkeypatch.setattr("camoufox.sync_api.Camoufox", FakeCamoufox)
+
+    cookies = _browser_assisted_qrcode_login(timeout_s=1)
+
+    assert launch_options[0]["headless"] is True
+    assert [addon.name for addon in launch_options[0]["exclude_addons"]] == ["UBO"]
+    assert cookies["web_session"] == "session-1"
 
 
 def test_qrcode_login_prefers_browser_assisted_backend(monkeypatch):
