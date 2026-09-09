@@ -64,7 +64,7 @@ uv sync
 ```bash
 # ─── Auth ─────────────────────────────────────────
 xhs login                             # Extract cookies from browser
-xhs login --qrcode                    # Headless QR login; prints Unicode QR + temporary URL
+xhs login --qrcode                    # Headless QR login; prints dark/light-background QR variants
 xhs auth                              # Open XHS externally, then paste Cookie header securely
 xhs auth --cookies 'a1=...; web_session=...'  # Import a browser Cookie header
 xhs status                            # Check login status
@@ -161,7 +161,17 @@ Other authenticated commands automatically retry once with fresh browser cookies
 
 In a sandbox without a GUI, run `xhs auth` for the manual external-browser flow. The CLI prints the XHS login URL, waits for a hidden prompt, and saves the pasted browser `Cookie` request header. In browser developer tools, copy the `Cookie` header from an authenticated request to `xiaohongshu.com`; do not paste a `Set-Cookie` response header. Alternatively, use `xhs login --qrcode` and scan the emitted QR with the Xiaohongshu app. It prints separate variants for dark and light chat backgrounds; scan the matching variant without reflowing its monospace text. The printed QR URL is temporary and is not a replacement for the app scan.
 
-To persist cookies at a mounted path, pass the global option before the command:
+Example for a GUI-less sandbox with persistent storage:
+
+```bash
+xhs --cookie-file /data/xhs/cookies.json login --qrcode
+# Dark terminal/chat: scan "Dark-background QR"
+# Light terminal/chat: scan "Light-background QR"
+# After confirmation, verify the persisted session:
+xhs --cookie-file /data/xhs/cookies.json status
+```
+
+To import cookies manually or in automation, pass the global option before the command:
 
 ```bash
 xhs --cookie-file /data/xhs/cookies.json auth --cookies 'a1=...; web_session=...'
@@ -376,7 +386,7 @@ uv sync
 ```bash
 # 认证
 xhs login                             # 从浏览器提取 Cookie
-xhs login --qrcode                    # 无头二维码登录（输出 Unicode 二维码和临时 URL）
+xhs login --qrcode                    # 无头二维码登录（输出适配深色/浅色背景的二维码）
 xhs auth                              # 外部浏览器登录后，安全粘贴 Cookie 请求头
 xhs auth --cookies 'a1=...; web_session=...'  # 导入浏览器 Cookie 字符串
 xhs status                            # 检查登录状态
@@ -454,6 +464,16 @@ xiaohongshu-cli 支持多种认证方式：
 4. **二维码扫码登录** — 无头 Camoufox 登录，输出适合聊天消息的黑白 Unicode 二维码和临时 URL，用小红书 App 扫码（`xhs login --qrcode`）
 
 无 GUI 的沙箱可以直接执行 `xhs auth`：CLI 会输出小红书登录页地址并以隐藏输入方式等待 Cookie。请在外部浏览器登录后，从开发者工具中复制发往 `xiaohongshu.com` 的已认证请求的 `Cookie` 请求头；不要复制响应中的 `Set-Cookie`。也可以执行 `xhs login --qrcode`，用小红书 App 扫描输出的二维码。CLI 会分别输出适用于深色和浅色聊天背景的版本，请扫描与当前背景匹配且未被自动换行的等宽文本版本。临时 QR URL 仅用于辅助展示，不能替代 App 扫码。
+
+无 GUI 沙箱的持久化扫码示例：
+
+```bash
+xhs --cookie-file /data/xhs/cookies.json login --qrcode
+# 深色终端或聊天背景：扫描 “Dark-background QR”
+# 浅色终端或聊天背景：扫描 “Light-background QR”
+# 确认登录后验证已持久化的会话：
+xhs --cookie-file /data/xhs/cookies.json status
+```
 
 Cookie 保存后有效期 **7 天**，超时后自动尝试从浏览器刷新。持久化到挂载目录时，应把全局参数放在子命令前，例如 `xhs --cookie-file /data/xhs/cookies.json status`。自动化环境也可设置 `XHS_COOKIE_FILE`，并通过 `XHS_COOKIES` 传入待导入的 Cookie，避免把密钥直接写入命令参数。Cookie 和保存的 JSON 文件都应按密钥保护。
 

@@ -15,7 +15,7 @@ tags:
 # xiaohongshu-cli — Xiaohongshu CLI Tool
 
 **Binary:** `xhs`
-**Credentials:** browser cookies (auto-extracted) or browser-assisted QR login (`--qrcode`)
+**Credentials:** browser cookies (auto-extracted/imported) or browser-assisted QR login (`--qrcode`)
 
 ## Setup
 
@@ -40,7 +40,7 @@ xhs status --yaml >/dev/null && echo "AUTH_OK" || echo "AUTH_NEEDED"
 ```
 
 If `AUTH_OK`, skip to [Command Reference](#command-reference).
-If `AUTH_NEEDED`, proceed to Step 1. Prefer `--qrcode` when browser cookie extraction is unavailable but launching a browser is acceptable.
+If `AUTH_NEEDED`, proceed to Step 1. In a GUI-less sandbox with Camoufox installed, prefer `--qrcode`; otherwise use `xhs auth` and ask the user to paste the Cookie request header through the hidden prompt.
 
 ### Step 1: Guide user to authenticate
 
@@ -49,7 +49,8 @@ Ensure user is logged into xiaohongshu.com in any browser supported by [browser_
 ```bash
 xhs login                              # auto-detect browser with valid cookies
 xhs login --cookie-source arc          # specify browser explicitly
-xhs login --qrcode                     # browser-assisted QR login with terminal QR output
+xhs login --qrcode                     # scan the output matching the current dark/light background
+xhs auth                               # GUI-less fallback: hidden Cookie request-header prompt
 ```
 
 Verify with:
@@ -66,6 +67,7 @@ xhs whoami
 | `NoCookieError: No 'a1' cookie found` | Guide user to login to xiaohongshu.com in browser |
 | `NeedVerifyError: Captcha required` | Ask user to open browser, complete captcha, then retry |
 | `IpBlockedError: IP blocked` | Suggest switching network (hotspot/VPN) |
+| QR does not scan | Use the variant matching the current dark/light background; preserve monospace lines without wrapping |
 | `SessionExpiredError` | Run `xhs login` to refresh cookies |
 
 ## Agent Defaults
@@ -197,11 +199,16 @@ xhs hot -c travel --yaml
 ### QR code login
 
 ```bash
-# When browser cookie extraction is not available
-xhs login --qrcode
-# → Launches a browser-assisted login flow
-# → Renders QR in terminal using Unicode half-blocks
-# → Scan with Xiaohongshu app → confirm → export cookies
+# GUI-less sandbox with a mounted persistent directory
+xhs --cookie-file /data/xhs/cookies.json login --qrcode
+# → Scan "Dark-background QR" on a dark viewer
+# → Scan "Light-background QR" on a light viewer
+# → Keep output monospace and unwrapped
+# → Confirm in the Xiaohongshu app, then verify persistence
+xhs --cookie-file /data/xhs/cookies.json status
+
+# If the rendered QR is altered by the chat client, import a Cookie request header
+xhs --cookie-file /data/xhs/cookies.json auth
 ```
 
 ### URL to insights pipeline
