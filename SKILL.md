@@ -40,7 +40,7 @@ xhs status --yaml >/dev/null && echo "AUTH_OK" || echo "AUTH_NEEDED"
 ```
 
 If `AUTH_OK`, skip to [Command Reference](#command-reference).
-If `AUTH_NEEDED`, proceed to Step 1. In a GUI-less sandbox with Camoufox installed, prefer `--qrcode`; otherwise use `xhs auth` and ask the user to paste the Cookie request header through the hidden prompt.
+If `AUTH_NEEDED`, proceed to Step 1. In a GUI-less sandbox with Camoufox installed, use `--qrcode --async` for non-streaming agent tool calls and blocking `--qrcode` for streaming terminals; otherwise use `xhs auth` and ask the user to paste the Cookie request header through the hidden prompt.
 
 ### Step 1: Guide user to authenticate
 
@@ -49,7 +49,9 @@ Ensure user is logged into xiaohongshu.com in any browser supported by [browser_
 ```bash
 xhs login                              # auto-detect browser with valid cookies
 xhs login --cookie-source arc          # specify browser explicitly
-xhs login --qrcode                     # scan the output matching the current dark/light background
+xhs login --qrcode                     # blocking flow for a streaming terminal
+xhs login --qrcode --async             # print QR and return while a detached worker waits
+xhs login --qrcode-status              # check the detached worker after the user scans
 xhs auth                               # GUI-less fallback: hidden Cookie request-header prompt
 ```
 
@@ -79,6 +81,65 @@ Payloads live under `.data`.
 - `--json` / `--yaml` → explicit format
 - `OUTPUT=json` env → global override
 - `OUTPUT=rich` env → force human output
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OUTPUT` | `auto` | Output mode: `json`, `yaml`, `rich`, or `auto`. Non-TTY `auto` output is YAML. Explicit `--json` or `--yaml` flags take precedence. |
+| `XHS_CONFIG_DIR` | `~/.xiaohongshu-cli` | Directory containing persistent CLI state: `cookies.json`, `qr_login.json`, `token_cache.json`, `index_cache.json`, and `search_sessions.json`. The value is the actual directory; the CLI does not append `.xiaohongshu-cli`. |
+| `XHS_COOKIE_FILE` | `$XHS_CONFIG_DIR/cookies.json` | Cookie-only path override used by login, load, save, status, and logout. Takes precedence over `XHS_CONFIG_DIR` for cookies. |
+| `XHS_COOKIES` | unset | Browser `Cookie` request-header string consumed by `xhs auth`. Treat it as a secret and avoid logging it. |
+
+Cookie path precedence, highest first:
+
+1. Global `--cookie-file PATH`
+2. `XHS_COOKIE_FILE`
+3. `$XHS_CONFIG_DIR/cookies.json`
+4. `~/.xiaohongshu-cli/cookies.json`
+
+### Persistent sandbox configuration
+
+Use one writable, mounted directory for all CLI state. Repeat the same environment
+setting on every command unless the sandbox config injects it globally:
+
+```bash
+export XHS_CONFIG_DIR=/home/user/.xiaohongshu-cli
+xhs login --qrcode --async
+xhs login --qrcode-status
+xhs status
+```
+
+The async QR worker and later status command must run in the same long-lived
+sandbox and use the same `XHS_CONFIG_DIR`. Do not use async QR login as the main
+process of a one-shot container; use blocking `xhs login --qrcode` there.
+
+To move only the cookie file while leaving caches and QR state in the default
+configuration directory:
+
+```bash
+export XHS_COOKIE_FILE=/mounted/secrets/xhs-cookies.json
+xhs status
+```
+
+Equivalent one-command override:
+
+```bash
+xhs --cookie-file /mounted/secrets/xhs-cookies.json status
+```
+
+To import a Cookie request header without placing it directly in command
+arguments:
+
+```bash
+export XHS_COOKIES='a1=...; web_session=...'
+xhs auth
+unset XHS_COOKIES
+```
+
+`XHS_COOKIES` must contain the `Cookie` request header from an authenticated
+request to `xiaohongshu.com`, not a response `Set-Cookie` header. Never print or
+persist this environment variable in logs or artifacts.
 
 ## Command Reference
 
@@ -133,7 +194,9 @@ Payloads live under `.data`.
 | Command | Description |
 |---------|-------------|
 | `xhs login` | Extract cookies from browser (auto-detect) |
-| `xhs login --qrcode` | Browser-assisted QR login — terminal QR output, browser completes login |
+| `xhs login --qrcode` | Blocking browser-assisted QR login for streaming terminals |
+| `xhs login --qrcode --async` | Print QR and continue login in a detached worker for non-streaming tools |
+| `xhs login --qrcode-status` | Read detached QR login progress from local state |
 | `xhs status` | Check authentication status |
 | `xhs logout` | Clear cached cookies |
 | `xhs whoami` | Show current user profile |
@@ -199,16 +262,21 @@ xhs hot -c travel --yaml
 ### QR code login
 
 ```bash
-# GUI-less sandbox with a mounted persistent directory
-xhs --cookie-file /data/xhs/cookies.json login --qrcode
-# → Scan "Dark-background QR" on a dark viewer
-# → Scan "Light-background QR" on a light viewer
-# → Keep output monospace and unwrapped
-# → Confirm in the Xiaohongshu app, then verify persistence
-xhs --cookie-file /data/xhs/cookies.json status
+# Non-streaming agent tool call in a long-lived GUI-less sandbox.
+# XHS_CONFIG_DIR moves cookies, qr_login.json, and the other CLI caches.
+XHS_CONFIG_DIR=/data/xhs xhs login --qrcode --async
+# → Return both QR variants to the user in monospace without wrapping.
+# → The user scans the variant matching the chat background and confirms in the app.
+XHS_CONFIG_DIR=/data/xhs xhs login --qrcode-status
+# → Repeat status after confirmation until it reports succeeded, then verify cookies.
+XHS_CONFIG_DIR=/data/xhs xhs status
+
+# Use the blocking flow in a streaming terminal or one-shot container.
+XHS_CONFIG_DIR=/data/xhs xhs login --qrcode
 
 # If the rendered QR is altered by the chat client, import a Cookie request header
-xhs --cookie-file /data/xhs/cookies.json auth
+XHS_CONFIG_DIR=/data/xhs xhs auth
+# Use --cookie-file or XHS_COOKIE_FILE instead for a cookie-only override.
 ```
 
 ### URL to insights pipeline
