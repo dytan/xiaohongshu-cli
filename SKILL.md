@@ -48,10 +48,10 @@ Ensure user is logged into xiaohongshu.com in any browser supported by [browser_
 
 ```bash
 xhs login                              # auto-detect browser with valid cookies
-xhs login --cookie-source arc          # specify browser explicitly
+xhs login --qrcode --async             # for gui-less terminals, print QR and return while a detached worker waits
+xhs login --qrcode-status              # for gui-less terminals, check the detached worker after the user scans
 xhs login --qrcode                     # blocking flow for a streaming terminal
-xhs login --qrcode --async             # print QR and return while a detached worker waits
-xhs login --qrcode-status              # check the detached worker after the user scans
+xhs login --cookie-source arc          # specify browser explicitly
 xhs auth                               # GUI-less fallback: hidden Cookie request-header prompt
 ```
 
